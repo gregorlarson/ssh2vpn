@@ -233,6 +233,29 @@ hostsshopt() {
 #parms: num variable-name
 read_sshopt() { eval "$2=\"\$_sshopt_$1\"" ; }
 
+#parms: validity-period num [num...]
+host_validity() {
+	local val="$1"
+	shift
+	while [ $# -gt 0 ]; do
+	   eval "_valper_$1='$val'"
+	   shift
+	done
+}
+#parms: num variable-name
+read_validity() { eval "$2=\"\${_valper_$1:-$default_validity}\"" ; }
+
+#parms: num [num...]
+cert_portfwd() {
+	while [ $# -gt 0 ]; do
+	   eval "_portfwd_$1=true"
+	   shift
+	done
+}
+
+#parms: num variable-name
+read_portfwd() { eval "$2=\${_portfwd_$1:-false}" ; }
+
 # Each time hostmap mapping is used, there will be a for-loop to search the
 # mapping. We couldn't use an eval because the name might contain a hyphen
 # (dash-char).
@@ -1612,6 +1635,42 @@ do_sshadd() {
   fi
   echo "Error: ssh2vpn no agent running." >&2
   return 2
+}
+
+#parms: hostnum|hostname CA-key [pubkey-file] [validity-period]
+# Host key must be called {hostnum}.pub or {hostname}.pub
+mkcert() {
+  local hostnum pubkey permit validity
+
+  [ -f "$2" ] || die "No CA key '$2' file found."
+  host_to_num "$1" ; hostnum=$?
+  if [ $hostnum -eq 0 ]; then
+     die "unknown host: $1"
+  fi
+  if [ "$3" ]; then
+     pubkey="$3"
+  else
+     pubkey="$1.pub"
+     [ -f "$pubkey" ] || pubkey=$hostnum.pub
+  fi
+  [ -f "$pubkey" ] || die "No public key '$pubkey' found."
+
+  read_prefix $hostnum host_prefix
+  read_portfwd $hostnum host_portfwd
+
+  permit="-O clear -O force-command='ssh2vpn force $host_prefix'"
+  if $host_portfwd ; then
+     permit="$permit -O permit-port-forwarding"
+  fi
+  if [ "$4" ]; then
+     validity="$4"
+  else
+     read_validity $hostnum validity
+  fi
+
+  cmd="ssh-keygen -s '$2' $permit -V '$validity' -I ssh2vpn-$hostnum $pubkey"
+  echo "$cmd"
+  eval "$cmd" ; keygen_rc=$?
 }
 
 # Allow import of this script for unit testing.

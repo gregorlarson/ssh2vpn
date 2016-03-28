@@ -15,6 +15,8 @@ hostnum 14 diaz
 hostnum 15 cloud2j cloud4 cloud2
 hostsshopt 15 -D 4128
 hostpref 10.99.17 15
+# See cert_portfwd below
+
 # Default to a larger MTU for cloud2
 hostmtu 7000 15
 
@@ -30,7 +32,9 @@ default_mtu=1460
 # This allows the ssh2vpn to be used for port-forwarding or socks5
 # as well as the vpn (tun device), using hostsshopt (see example above).
 
-# cert_portfwd 15
+# In this example, host number 15 is in a different lower security zone.
+# Other hosts are allowed port forwarding.
+cert_portfwd 4 5 6 7 8 9 10 11 12 13 14
 
 # The default_validity and host_validity settings control the validity
 # period for generated certificates. Refer to the -V option on ssh-keygen
@@ -40,7 +44,7 @@ default_validity='+12w'
 
 # Usage: host_validity validity-period hostnum [hostnum ...]
 # This allows some hosts to get a different validity period.
-# host_validity +52w 11 14 15
+host_validity +52w 11 14 15
 
 # Get more settings from a local file, if present:
 [ -f /site/site/etc/ssh2vpn.rc ] && . /site/site/etc/ssh2vpn.rc 
