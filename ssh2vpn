@@ -315,6 +315,9 @@ fi
 do_start() {
  if [ "$1" = persist ]; then
     persist=true
+    # If the user has selected 'persist' then they may not
+    # use their personal ssh-agent.
+    no_personal_agent
  else
     persist=false
  fi
