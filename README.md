@@ -33,8 +33,9 @@ For locally managed (non systemd) connections, this stops the connection (kills 
 If you do not want to store private keys or certificates on disk, but still want the ability to create persistent tunnels,
 you can create a dedicated ssh-agent that will be used only by ssh2vpn. In this way, you can load the keys into that agent (and provide the passphrases interactively), then start a persistent tunnel.
 
-
 ## ssh2vpn add
+Load private keys (and certificates) into the ssh-agent. If the private keys are protected by a passphrase, then you will be prompted to provide it.
+- this ssh-agent is separate from your personal ssh-agent, and is only used by ssh2vpn.
 
 # ssh2vpn mkcert
 If you prefer to use a certificate-authority, you can generate certificates that can only be used for ssh2vpn access (and not general login access). The generated certificates restrict clients to their configured subnet.
