@@ -1,7 +1,6 @@
 # ssh2vpn
-
+Mesh VPN based on ssh TUN support.
 [![Join the chat at https://gitter.im/gregorlarson/ssh2vpn](https://badges.gitter.im/gregorlarson/ssh2vpn.svg)](https://gitter.im/gregorlarson/ssh2vpn?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-Mesh VPN based on ssh TUN support
 
 I created this because I was having issues with openvpn performance
 due to the centralized nature of openvpn. Also, openvpn was not always
