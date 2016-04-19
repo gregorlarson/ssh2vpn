@@ -287,8 +287,8 @@ no_personal_agent() {
   unset SSH_AGENT_PID
 }
 
-# These are defaults. You can override these in ssh2vpn.rc
-# if needed.
+# These are defaults. You can override these in ssh2vpn.rc if needed.
+vpnmode=tun
 vpn_prefix=10.99.1
 pid_dir=/run/ssh2vpn
 agent_sock=$pid_dir/agent
@@ -386,7 +386,7 @@ ssh2vpn_start() {
  # rnum=$1 ; desthost=$2
 
  # The tun device on this host gets the remote number.
- tun=tun$rnum
+ tun=$vpnmode$rnum
  tconf=$ifconf/$tun
 
  sig_rcvd=
@@ -508,15 +508,15 @@ wait_for_tun() {
  max=${3:-90}
  x=0
  while true; do
-   [ -d /proc/$2 ] || return 1		# PID gone
-   [ -d $ifconf/tun$1 ] && return 0	# Found TUN
+   [ -d /proc/$2 ] || return 1			# PID gone
+   [ -d $ifconf/$vpnmode$1 ] && return 0	# Found TUN/TAP
 
    # depends on a trap set previously that will assign sig_rcvd
    [ "$sig_rcvd" ] && return 3		# SIGNAL received
 
    x=$(($x + 1))
    if [ $x -eq 10 -o $x -eq 30 -o $x -eq 60 -o $x -eq $max ]; then
-      log "ssh($2) did not create tun$1 after $x secs"
+      log "ssh($2) did not create $vpnmode$1 after $x secs"
    fi
 
    [ $x -lt $max ] || return 2		# TIMEOUT
@@ -582,8 +582,13 @@ exec_ssh() {
  # Get any additional options
  read_sshopt $rnum xtr
 
+ # To use a tap (layer2) instead of a tun (layer3 point-to-point)
+ # then the Tunnel ethernet parameter allows this:
+ topt=
+ [ $vpnmode = tap ] && topt="-o 'Tunnel ethernet'"
+
  remcmd="ssh2vpn from $HOSTNAME $local_hostnum $rnum"
- sshcmd="ssh $ssh_id_opt -nT -w $rnum:$local_hostnum $xtr $destfqdn"
+ sshcmd="ssh $topt $ssh_id_opt -nT -w $rnum:$local_hostnum $xtr $destfqdn"
  bugme "agent($SSH_AUTH_SOCK) $sshcmd $remcmd"
  # If we do no redirect stdout, then any output from ssh may appear
  # in systemd journal.
@@ -781,9 +786,9 @@ start_tun_daemon() {
     return 0
  fi
 
- # Check if requested local tun is available on this host
- if [ -d $ifconf/tun$rnum ]; then
-    log "Requested tun$rnum already in-use for host=$desthost"
+ # Check if requested local tun/tap is available on this host
+ if [ -d $ifconf/$vpnmode$rnum ]; then
+    log "Requested $vpnmode$rnum already in-use for host=$desthost"
     return 3
  fi
 
@@ -970,7 +975,7 @@ hostnum_status() {
  # 0=OK 2=missing 4=configuration-error
  tun_status $1 ; tun_rc=$?
  if [ $tun_rc -eq 0 ]; then
-    msg="$msg tun$1 ok"
+    msg="$msg $vpnmode$1 ok"
  elif [ $tun_rc -eq 2 ]; then
     if [ "$running" = stopped ]; then
        # No daemon (ssh/sshd) and no tun, so, the tun is not actually
@@ -980,10 +985,10 @@ hostnum_status() {
        msg="$msg cleanup ok."
     else
        # We expected the tun device to be found so consider it missing.
-       msg="$msg tun$1 missing"
+       msg="$msg $vpnmode$1 missing"
     fi
  else
-    msg="$msg tun$1 fault"
+    msg="$msg $vpnmode$1 fault"
  fi
 
  # Lastly, we check the manager and perist flag and output a line
@@ -1123,7 +1128,7 @@ local_running() {
 #	rc=4 Tun not configured
 #parms: rnum
 tun_status() {
- local tun=tun$1
+ local tun=$vpnmode$1
  local tunconf=$ifconf/$tun
  local tun_rc=0
 
@@ -1145,10 +1150,16 @@ tun_status() {
     tun_rc=4
  fi
 
+ [ $vpnmode = tap ] && return $tun_rc
+ # TODO: are there things we could check for tap?
+
  # cloned from update_tun
  # allow override of the subnet
  read_prefix $local_hostnum local_prefix
  read_prefix $1 peer_prefix
+
+ # For tun (point-to-point) mode, check for the expected
+ # local and peer addresses.
 
  f="inet $local_prefix.$local_hostnum"
  if ip addr show dev $tun | fgrep -q "$f" ; then
@@ -1190,7 +1201,9 @@ _scan_tuns() {
 
 # Force command (using authorized keys, command='ssh2vpn force {scope}')
 # or the force-command option in the certificate.
-# $SSH_ORIGINAL_COMMAND is the parms
+# parms: {allowed}|any $SSH_ORIGINAL_COMMAND
+#	SSH_ORIGINAL_COMMAND = from name num num   (see do_from)
+#
 do_force() {
   debug "force($*) cmd=$SSH_ORIGINAL_COMMAND"
 
@@ -1200,17 +1213,25 @@ do_force() {
   # I want to allow the same command syntax to be usable with a forced
   # key command and regular ssh2vpn from command.
   #
+  # We expect the original command to be in the form:
+  #	ssh2vpn from name num num
+  #
   if [ "$1" = ssh2vpn ]; then
      shift
   else
      log "Error: force: expected ssh2vpn"
   fi
 
+  # Remaining: from name num num
+
   if [ "$1" = from ]; then
      shift
   else
      log "Error: force: expected from"
   fi
+
+  # Remaining: name num num
+  #		$1  $2  $3
 
   # The remaining parameters should be the same as ssh2vpn from, however,
   # we screen the requested tunnel.
@@ -1227,7 +1248,7 @@ do_force() {
      fi
   fi
 
-  do_from "$@"
+  do_from "$@"		# name num num
   return $?
 }
 
@@ -1239,6 +1260,16 @@ do_force() {
 # is, from-local will now become remote, and from-remote will be local.
 #
 #parms: from-host from-local-num from-remote-num	(required)
+#
+#	from-host	- remote hostname for logging purposes.
+#	from-local-num	- host number, matching from-host
+#	from-remote-num	- host number that should be our hostnum, because
+#		this is the hostnum the other end was trying to reach.
+#
+# TODO: figure out if we want to support additional parameters, for example,
+#	to allow the far-end host to indicate a subnet size (rather than a
+#	single IP) or request NAT be created here.
+#
 do_from() {
  desthost=$1 ; rnum=$2		# for consistency and other functions
  syslog_only=true		# force logger
@@ -1260,7 +1291,7 @@ do_from() {
 
  # We don't wait for tun be be created in the 'from' case.
  # It should already be created before this script is run.
- from_tun=tun$rnum
+ from_tun=$vpnmode$rnum
  from_conf=$ifconf/$tun
  if [ ! -d $from_conf ]; then
     die "from_host=$desthost Tun device not created."
@@ -1317,7 +1348,7 @@ do_from() {
 #
 #parms: rnum
 update_tun() {
- local tun=tun$1
+ local tun=$vpnmode$1
 
  read_mtu $1 tun_mtu
  if [ $tun_mtu -eq 0 ]; then
@@ -1368,7 +1399,16 @@ update_tun() {
  # allow override of the subnet
  read_prefix $local_hostnum local_prefix
  read_prefix $1 peer_prefix
- ip addr add $local_prefix.$local_hostnum/32 peer $peer_prefix.$1 dev $tun
+
+ if [ $vpnmode = tun ]; then
+    # Only /32 is really supported in the default point-to-point tunnel mode.
+    # I tried /24 but it did not appear to make any difference.
+    ip addr add $local_prefix.$local_hostnum/32 peer $peer_prefix.$1 dev $tun
+    # Note that the above command implicity adds a route:
+    #	$peer_prefix.$1 dev $tun src $local_prefix.$local_hostnum
+ else
+    echo "TODO: configuration for $tun"
+ fi
 }
 
 # stop command
