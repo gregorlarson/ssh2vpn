@@ -1291,10 +1291,20 @@ do_from() {
 
  # We don't wait for tun be be created in the 'from' case.
  # It should already be created before this script is run.
- from_tun=$vpnmode$rnum
+
+ # For incoming connections, we discover the Tunnel mode (tun or tap).
+
+ from_tun=tun$rnum
  from_conf=$ifconf/$tun
- if [ ! -d $from_conf ]; then
-    die "from_host=$desthost Tun device not created."
+ if [ -d $from_conf ]; then
+    vpnmode=tun
+ else
+    vpnmode=tap
+    from_tun=tap$rnum
+    from_conf=$ifconf/$tun
+    if [ ! -d $from_conf ]; then
+       die "from_host=$desthost Tun device not created."
+   fi
  fi
 
  # Here, we can put something in the pid file....
