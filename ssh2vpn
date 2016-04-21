@@ -411,6 +411,7 @@ do_start() {
 #parms: rnum desthost		(implicit)
 ssh2vpn_start() {
  # rnum=$1 ; desthost=$2
+ [ "$rnum" ] || die "ssh2vpn_start usage ($*)"
 
  # set the global vpnmode.
  read_mode $rnum vpnmode
@@ -817,7 +818,8 @@ daemon_cmd() {
 #parms: rnum desthost vpnmode		(implicit)
 start_tun_daemon() {
  # rnum=$1 ; desthost=$2 ; vpnmode=$3
-
+ [ "$rnum" ] || die "start_tun_daemon usage ($*)"
+ 
  if daemon_running $rnum ; then
     log "re-using existing daemon for host=$desthost"
     # In the re-use case, we update then tun settings in case it
@@ -842,10 +844,10 @@ start_tun_daemon() {
  daemon_cmd $rnum $desthost $vpnmode < /dev/null > /dev/null 2>&1 &
 
  # Keep pid-file for the management thread.
- echo "$!" > $pid_dir/mgr.$1.pid
+ echo "$!" > $pid_dir/mgr.$rnum.pid
  # Give daemon time to start (or fail) before checking.
  sleep 1
- if daemon_running $1 ; then
+ if daemon_running $rnum ; then
     debug "host=$desthost new daemon found running."
  else
     log "failed to start daemon for host=$desthost"
