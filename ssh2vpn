@@ -196,6 +196,23 @@ hostpref() {
 #parms: num variable-name
 read_prefix() { eval "$2=\"\${_prefmap_$1:-$vpn_prefix}\"" ; }
 
+# Support for alternate tunnel mode for a host.
+# This is applied by the originator of a connection based
+# on the destination. At this time, it does not apply
+# to the source host, even if the hostnum matches.
+hostmode() {
+  n=$1 ; shift
+  case "$n" in tun|tap) ;;
+  *) die "invalid tunnel mode: '$n' ($*)"
+  esac
+
+  for d in $@ ; do
+	eval "_modemap_$d=\"$n\""
+  done
+}
+#parms: num variable-name
+read_mode() { eval "$2=\"\${_modemap_$1:-$default_mode}\"" ; }
+
 # Support for a non-default maximum transmisssion unit (MTU):
 # Create hostnum to MTU mapping by creating variables
 # of form: _mtumap_{N}={mtu-bytes}
@@ -288,7 +305,7 @@ no_personal_agent() {
 }
 
 # These are defaults. You can override these in ssh2vpn.rc if needed.
-vpnmode=tun
+default_mode=tun
 vpn_prefix=10.99.1
 pid_dir=/run/ssh2vpn
 agent_sock=$pid_dir/agent
@@ -329,6 +346,16 @@ fi
 
 [ "$HOSTNAME" ] || HOSTNAME=`hostname`
 [ -d $pid_dir ] || mkdir -p $pid_dir
+
+# vpnmode is the 'current' vpn tunnel mode.
+# It is set initially to the default_mode (tun), or value
+# set in rc file. The vpnmode may be changed, however, based
+# on the incoming connection or the _modemap_. Refer to
+# hostmode and read_mode above.
+#
+# vpnmode should be considerred an implicit global parameter
+# similar to rnum (and used like the rnum global var).
+vpnmode=$default_mode
 
 # start tunnel command
 # Setup the common names to be passed implicitly to all sub-functions:
@@ -385,6 +412,9 @@ do_start() {
 ssh2vpn_start() {
  # rnum=$1 ; desthost=$2
 
+ # set the global vpnmode.
+ read_mode $rnum vpnmode
+
  # The tun device on this host gets the remote number.
  tun=$vpnmode$rnum
  tconf=$ifconf/$tun
@@ -403,7 +433,10 @@ ssh2vpn_start() {
  # The daemon must be running before configuration of the tun
  # can be attempted. start_tun_daemon will return true if daemon
  # starts or we are reusing existing daemon.
- if start_tun_daemon $rnum $desthost ; then
+ #
+ # start_tun_daemon takes implicit parameters: $rnum $desthost $vpnmode
+ #
+ if start_tun_daemon ; then
     debug "host=$desthost cmdshell=$cmdshell_pid tun daemon running."
  else
     log "host=$desthost cmdshell=$cmdshell_pid failed to start daemon."
@@ -467,28 +500,33 @@ exec_ssh_service() {
 # If it is not included, then, the pid value will be retrieved
 # from the pid file.
 #
-#parms: rnun [pid]	(internal, or from systemd ssh2vpn.service)
+#parms: rnum [pid vpn-mode]	(internal, or from systemd ssh2vpn.service)
 service_tun() {
  rnum=$1		# for use by other functions
 
  if [ "$2" ]; then
     pid=$2
+    # vpnmode=$3	(same name)
  else
     # Race condition where pid file is not created fast enough
     # by exec_ssh_service?
     [ -f $pid_dir/$1.pid ] || sleep 1
 
     if [ -f $pid_dir/$1.pid ]; then
-       read pid < $pid_dir/$1.pid
+       v=
+       pid=
+       read pid v < $pid_dir/$1.pid
+       [ "$pid" ] || "operation error, no pid in $pid_dir/$1.pid"
+       [ "$v" ] && vpnmode=$v	# TODO: make mode non-optional
     else
        die "operation error, no $pid_dir/$1.pid"
     fi
  fi
 
  # Wait for the tun device to be created
- wait_for_tun $1 $pid ; wrc=$?
+ wait_for_tun $1 $pid $vpnmode ; wrc=$?
  case $wrc in
- 0)	update_tun $1 ;;	# success, update the tun
+ 0)	update_tun $1 $vpnmode ;;	# success, update the tun
  1)	log "wait_tun=$wrc ssh exited" ;;
  2)	log "wait_tun=$wrc timeout waiting" ;;
  3)	log "wait_tun=$wrc signal received" ;;
@@ -503,20 +541,20 @@ service_tun() {
 # rc=2 timeout
 # rc=3 signal received
 #
-#parms: rnum ssh-pid [secs]
+#parms: rnum ssh-pid vpn-mode [secs]
 wait_for_tun() {
- max=${3:-90}
+ max=${4:-90}
  x=0
  while true; do
    [ -d /proc/$2 ] || return 1			# PID gone
-   [ -d $ifconf/$vpnmode$1 ] && return 0	# Found TUN/TAP
+   [ -d $ifconf/$3$1 ] && return 0	# Found TUN/TAP
 
    # depends on a trap set previously that will assign sig_rcvd
    [ "$sig_rcvd" ] && return 3		# SIGNAL received
 
    x=$(($x + 1))
    if [ $x -eq 10 -o $x -eq 30 -o $x -eq 60 -o $x -eq $max ]; then
-      log "ssh($2) did not create $vpnmode$1 after $x secs"
+      log "ssh($2) did not create $3$1 after $x secs"
    fi
 
    [ $x -lt $max ] || return 2		# TIMEOUT
@@ -642,9 +680,12 @@ get_auth() {
 # Based on the {host-num}.persist file flag, this function will restart
 # the daemon after it exists, or just exit itself.
 #
-#parms: rnum desthost		(required)
+# The vpnmode could be computed in here based on rnum, but currently it is
+# an explicit parameter in case it changes for some reason.
+#
+#parms: rnum desthost vpnmode		(required)
 daemon_cmd() {
- rnum=$1 ; desthost=$2 ; shift ; shift
+ rnum=$1 ; desthost=$2 ; vpnmode=$3 ; shift ; shift ; shift
 
  # NOTE: if needed, this manager shell pid could be saved in a file
  #       (get it from /proc/self/stat). $$ refers to invoking shell.
@@ -678,7 +719,7 @@ daemon_cmd() {
    [ -z "$mpid" ] && die "$mgrpidf empty. Manager exiting."
    [ $mpid -eq $mypid ] || die "Manager pid mismatch ($mypid) found $mpid. Manager exiting."
 
-   exec_ssh &	# rnum desthost (implicit)
+   exec_ssh &	# rnum desthost vpnmode (implicit)
    pid=$!
    # pid refers to the ssh client
 
@@ -687,7 +728,7 @@ daemon_cmd() {
    # service. A pid-file created and removed later after the ssh client
    # completes.
 
-   echo $pid > $pidfile
+   echo $pid $vpnmode > $pidfile
 
    # Link this pidfile such that it is omitted from sendsigs (first pass) during
    # shutdown. Hopefully, this will allow NFS to unmount while the tunnel is
@@ -698,7 +739,7 @@ daemon_cmd() {
    fi
 
    # service the tun device, wait for it to be created and update it
-   if service_tun $rnum $pid ; then
+   if service_tun $rnum $pid $vpnmode ; then
       cmdsig=USR1		# USR1 will signal success
    else
       cmdsig=USR2
@@ -773,16 +814,21 @@ daemon_cmd() {
 # was created as expected, however, it does detect a
 # collision where the tun already exists.
 #
-#parms: rnum desthost		(implicit)
+#parms: rnum desthost vpnmode		(implicit)
 start_tun_daemon() {
- # rnum=$1 ; desthost=$2
+ # rnum=$1 ; desthost=$2 ; vpnmode=$3
 
  if daemon_running $rnum ; then
     log "re-using existing daemon for host=$desthost"
     # In the re-use case, we update then tun settings in case it
     # was not done initially, or, ssh2vpn.rc settings changed since
     # it was originally done.
-    update_tun $rnum
+
+    # If the vpn-mode was saved in the pid-file, then it overrides
+    # the implicit parameter vpnmode:
+    [ "$running_mode" ] && vpnmode=$running_mode
+
+    update_tun $rnum $vpnmode
     return 0
  fi
 
@@ -792,17 +838,8 @@ start_tun_daemon() {
     return 3
  fi
 
- # If this does not properly detach from process group/pty then
- # I might need to do. Tested this and it performs similar to starting
- # daemon_cmd directly. Need to consider if start-stop-daemon is available
- # on non-debian systems. Also need to consider rc_file and any other parameters
- # that might need to be passed on.
- #
- # start-stop-daemon --start -x "$0" -- daemon "$@" < /dev/null > /dev/null 2>&1 &
- #	the daemon option is handled by this script (MAIN bottom).
- #
  # If started via a terminal, redirect stdin,out,err to detach from terminal.
- daemon_cmd $rnum $desthost < /dev/null > /dev/null 2>&1 &
+ daemon_cmd $rnum $desthost $vpnmode < /dev/null > /dev/null 2>&1 &
 
  # Keep pid-file for the management thread.
  echo "$!" > $pid_dir/mgr.$1.pid
@@ -973,7 +1010,11 @@ hostnum_status() {
 
  # Check the status of the TUN device
  # 0=OK 2=missing 4=configuration-error
- tun_status $1 ; tun_rc=$?
+
+ # The running_mode is returned by local_running function above.
+ [ "$running_mode" ] || read_mode $1 running_mode
+
+ tun_status $1 $running_mode ; tun_rc=$?
  if [ $tun_rc -eq 0 ]; then
     msg="$msg $vpnmode$1 ok"
  elif [ $tun_rc -eq 2 ]; then
@@ -1067,8 +1108,8 @@ hostnum_status() {
 # rc=0 indicates pid file and ssh or sshd process found
 # If needed a more specific rc can be had via local_running directly.
 #
-# Also returns running_pid (by side-effect), if there is a valid ssh/sshd
-# process.
+# Also returns running_pid,running_mode (by side-effect), if there is
+# a valid ssh/sshd process.
 #
 # Also deletes stale .pid files.
 #parms: dest-host|num
@@ -1092,19 +1133,21 @@ daemon_running() {
 # rc=2 no process found (pid file is deleted)
 # rc=3 pidfile does not match process (pid file is retained for debugging)
 #
-# Also returns running_pid (by side-effect), ONLY if there is a running
-# process that matches the specified exe.
+# Also returns running_pid and running_mode (by side-effect), ONLY if
+# there is a running process that matches the specified exe.
 #
 #parms: pid-name exename
 local_running() {
  running_pid=
+ running_mode=
  local pidfile=$pid_dir/$1.pid
  [ -f $pidfile ] || return 1		# FALSE, no pidfile
 
- read running_pid < $pidfile
+ read running_pid running_mode < $pidfile
  if [ ! -d /proc/$running_pid ]; then
     rm -f $pidfile		# delete stale pid file
     running_pid=
+    running_mode=
     return 2				# FALSE, no process
  fi
 
@@ -1126,9 +1169,9 @@ local_running() {
 #	rc=0 OK
 #	rc=2 Missing tun
 #	rc=4 Tun not configured
-#parms: rnum
+#parms: rnum vpn-mode
 tun_status() {
- local tun=$vpnmode$1
+ local tun=$2$1
  local tunconf=$ifconf/$tun
  local tun_rc=0
 
@@ -1150,7 +1193,7 @@ tun_status() {
     tun_rc=4
  fi
 
- [ $vpnmode = tap ] && return $tun_rc
+ [ $2 = tap ] && return $tun_rc
  # TODO: are there things we could check for tap?
 
  # cloned from update_tun
@@ -1307,6 +1350,15 @@ do_from() {
    fi
  fi
 
+ # We override the 'current' as well as the default vpn mode based
+ # in the incoming connection type.
+ default_mode=$vpnmode
+
+ # Note that that mixed mode connections between hosts are not fully
+ # supported.
+ # If the vpn mode (_modemap_ ) for a host is set in the rc file
+ # (using hostmode) then it cannot be different than the incoming mode.
+ #
  # Here, we can put something in the pid file....
  # Ideally, we would like to put the sshd in there, however, that might
  # be difficult to find in all situations. Currently, it looks like
@@ -1325,10 +1377,10 @@ do_from() {
 
  # This may overwrite an existing stale pid-file in some cases.
  pidfile=$pid_dir/remote.$rnum.pid
- echo $PPID > $pidfile
+ echo $PPID $vpnmode > $pidfile
 
  # pidfile is done, tun exists, so configure it.
- update_tun $rnum
+ update_tun $rnum $vpnmode
 
  # Shelter the sshd (child) from sendsigs in case we want to keep in
  # running a bit longer (debian based systems). On Fedora/Redhat
@@ -1356,9 +1408,11 @@ do_from() {
 # The remote-host is required for subnet override
 # See also tun_status which clones a bit of this logic
 #
-#parms: rnum
+#parms: rnum vpn-mode
 update_tun() {
- local tun=$vpnmode$1
+ local vmode=$2
+ local tun=$vmode$1
+ local mtu tun_mtu
 
  read_mtu $1 tun_mtu
  if [ $tun_mtu -eq 0 ]; then
@@ -1410,7 +1464,7 @@ update_tun() {
  read_prefix $local_hostnum local_prefix
  read_prefix $1 peer_prefix
 
- if [ $vpnmode = tun ]; then
+ if [ $vmode = tun ]; then
     # Only /32 is really supported in the default point-to-point tunnel mode.
     # I tried /24 but it did not appear to make any difference.
     ip addr add $local_prefix.$local_hostnum/32 peer $peer_prefix.$1 dev $tun
@@ -1752,7 +1806,6 @@ case "$1" in
  #	- I suspect I should NEVER use SSH_ORIGINAL_COMMAND with eval.
  #
  force)		shift ; do_force "$@" $SSH_ORIGINAL_COMMAND	;;
- daemon)	shift ; daemon_cmd "$@"		;;	# rnum dest
  agent)		shift ; do_agent "$@"		;;	# just start agent
  add|addkey)	shift ; do_sshadd "$@"		;;	# ssh-add parms
  execssh)	shift ; exec_ssh_service "$@"	;;	# rnum dest
