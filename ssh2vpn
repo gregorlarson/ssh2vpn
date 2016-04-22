@@ -528,7 +528,7 @@ service_tun() {
  wait_for_tun $1 $pid $vpnmode ; wrc=$?
  case $wrc in
  0)	update_tun $1 $vpnmode ;;	# success, update the tun
- 1)	log "wait_tun=$wrc ssh exited" ;;
+ 1)	log "wait_tun=$wrc ssh exited ($1,$pid,$vpnmode)" ;;
  2)	log "wait_tun=$wrc timeout waiting" ;;
  3)	log "wait_tun=$wrc signal received" ;;
  *)	log "wait_tun=$wrc unknown"
@@ -547,7 +547,7 @@ wait_for_tun() {
  max=${4:-90}
  x=0
  while true; do
-   [ -d /proc/$2 ] || return 1			# PID gone
+   [ -d /proc/$2 ] || return 1		# PID gone
    [ -d $ifconf/$3$1 ] && return 0	# Found TUN/TAP
 
    # depends on a trap set previously that will assign sig_rcvd
@@ -624,14 +624,15 @@ exec_ssh() {
  # To use a tap (layer2) instead of a tun (layer3 point-to-point)
  # then the Tunnel ethernet parameter allows this:
  topt=
- [ $vpnmode = tap ] && topt="-o 'Tunnel ethernet'"
+ [ $vpnmode = tap ] && topt="-o Tunnel	ethernet"	# TAB char
 
  remcmd="ssh2vpn from $HOSTNAME $local_hostnum $rnum"
  sshcmd="ssh $topt $ssh_id_opt -nT -w $rnum:$local_hostnum $xtr $destfqdn"
  bugme "agent($SSH_AUTH_SOCK) $sshcmd $remcmd"
- # If we do no redirect stdout, then any output from ssh may appear
+ # If we do not redirect stdout, then any output from ssh may appear
  # in systemd journal.
- exec $sshcmd "$remcmd"
+ IFS=' '	# no TAB
+ exec $sshcmd "$remcmd" 	# > /tmp/ssh2vpn.out 2>&1
  # we do not expect exec to return
  die "exec failed: $sshcmd"
 }
@@ -1339,17 +1340,17 @@ do_from() {
 
  # For incoming connections, we discover the Tunnel mode (tun or tap).
 
- from_tun=tun$rnum
+ tun=tun$rnum
  from_conf=$ifconf/$tun
  if [ -d $from_conf ]; then
     vpnmode=tun
  else
-    vpnmode=tap
-    from_tun=tap$rnum
+    tun=tap$rnum
     from_conf=$ifconf/$tun
     if [ ! -d $from_conf ]; then
        die "from_host=$desthost Tun device not created."
    fi
+    vpnmode=tap
  fi
 
  # We override the 'current' as well as the default vpn mode based
@@ -1473,7 +1474,13 @@ update_tun() {
     # Note that the above command implicity adds a route:
     #	$peer_prefix.$1 dev $tun src $local_prefix.$local_hostnum
  else
-    echo "TODO: configuration for $tun"
+    # In order to use the layer-2 TAP the addresses need to be within a
+    # subnet. Each pair of tap needs it's own unique subnet.
+    # This subnet could be quite small because there are only the two addresses.
+    # TODO: figure out how to configure a subnet for a pair of tap.
+    #	- we may not want to use local_prefix or peer_prefix because these
+    #	  could collide (and might not match).
+    ip addr add 10.91.2.$local_hostnum/24 dev $tun
  fi
 }
 
