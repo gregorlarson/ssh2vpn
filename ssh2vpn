@@ -1480,7 +1480,15 @@ update_tun() {
     # TODO: figure out how to configure a subnet for a pair of tap.
     #	- we may not want to use local_prefix or peer_prefix because these
     #	  could collide (and might not match).
-    ip addr add 10.91.2.$local_hostnum/24 dev $tun
+
+    eval netaddr=\$addr_${1}_$local_hostnum
+
+    if [ "$netaddr" = dhcp ]; then
+       dhclient -v1 $tun ; dhcp_rc=$?
+    else
+       [ "$netaddr" ] || netaddr=10.91.2.$local_hostnum/24
+       ip addr add $netaddr dev $tun
+    fi
  fi
 }
 
