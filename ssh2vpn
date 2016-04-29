@@ -1196,7 +1196,7 @@ tun_status() {
     tun_rc=4
  fi
 
- [ $2 = tap ] && return $tun_rc
+ [ "$2" = tap ] && return $tun_rc
  # TODO: are there things we could check for tap?
 
  # cloned from update_tun
