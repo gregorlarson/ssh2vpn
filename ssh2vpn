@@ -479,7 +479,7 @@ service_tun() {
     [ -f $pid_dir/$1.pid ] || sleep 1
 
     if [ -f $pid_dir/$1.pid ]; then
-       read pid < $pid_dir/$1.pid
+       read pid junk < $pid_dir/$1.pid
     else
        die "operation error, no $pid_dir/$1.pid"
     fi
@@ -669,7 +669,7 @@ daemon_cmd() {
    #	- there is another instance of the manager.
    [ -f $mgrpidf ] || die "$mgrpidf missing. Manager exiting."
    mpid=
-   read mpid < $mgrpidf
+   read mpid junk < $mgrpidf
    [ -z "$mpid" ] && die "$mgrpidf empty. Manager exiting."
    [ $mpid -eq $mypid ] || die "Manager pid mismatch ($mypid) found $mpid. Manager exiting."
 
@@ -1096,8 +1096,8 @@ local_running() {
  local pidfile=$pid_dir/$1.pid
  [ -f $pidfile ] || return 1		# FALSE, no pidfile
 
- read running_pid < $pidfile
- if [ ! -d /proc/$running_pid ]; then
+ read running_pid junk < $pidfile
+ if [ ! -d "/proc/$running_pid" ]; then
     rm -f $pidfile		# delete stale pid file
     running_pid=
     return 2				# FALSE, no process
@@ -1501,7 +1501,7 @@ run_agent() {
        # Replace other personal agent in environment.
        SSH_AUTH_SOCK=$agent_sock
        if [ -f $agent_sock.run ]; then
-          read SSH_AGENT_PID < $agent_sock.run
+          read SSH_AGENT_PID junk < $agent_sock.run
        else
           bugme "missing $agent_sock.run"
           unset SSH_AGENT_PID
@@ -1512,7 +1512,7 @@ run_agent() {
     if [ -e $agent_sock ]; then
        export SSH_AUTH_SOCK=$agent_sock
        if [ -f $agent_sock.run ]; then
-          read SSH_AGENT_PID < $agent_sock.run
+          read SSH_AGENT_PID junk < $agent_sock.run
        else
           bugme "missing $agent_sock.run"
           unset SSH_AGENT_PID
