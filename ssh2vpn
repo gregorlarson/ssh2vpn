@@ -488,7 +488,10 @@ service_tun() {
  # Wait for the tun device to be created
  wait_for_tun $1 $pid ; wrc=$?
  case $wrc in
- 0)	update_tun $1 ;;	# success, update the tun
+ 0)	# Do I need to give the ssh client a second to work on the tun before
+	# I configure it? I saw a race-condition on the server side.
+	sleep 1
+	update_tun $1 ;;	# success, update the tun
  1)	log "wait_tun=$wrc ssh exited" ;;
  2)	log "wait_tun=$wrc timeout waiting" ;;
  3)	log "wait_tun=$wrc signal received" ;;
@@ -503,9 +506,9 @@ service_tun() {
 # rc=2 timeout
 # rc=3 signal received
 #
-#parms: rnum ssh-pid [secs]
+#parms: rnum ssh-pid [timeout-secs]
 wait_for_tun() {
- max=${3:-90}
+ max=${3:-30}
  x=0
  while true; do
    [ -d /proc/$2 ] || return 1		# PID gone
@@ -515,7 +518,7 @@ wait_for_tun() {
    [ "$sig_rcvd" ] && return 3		# SIGNAL received
 
    x=$(($x + 1))
-   if [ $x -eq 10 -o $x -eq 30 -o $x -eq 60 -o $x -eq $max ]; then
+   if [ $x -gt 1 ]; then
       log "ssh($2) did not create tun$1 after $x secs"
    fi
 
