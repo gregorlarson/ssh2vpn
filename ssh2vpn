@@ -1286,6 +1286,15 @@ do_from() {
  pidfile=$pid_dir/remote.$rnum.pid
  echo $PPID > $pidfile
 
+ # I think I am seeing some race condition if I configure the tun
+ # to quickly?  ... channel 0: write failed (on client side)
+ #
+ # Is there a way I could check if the tun is 'ready' for additional
+ # configuration?
+ # { ip link show tun$rnum ; ifconfig tun$rnum ; } > /tmp/tun.pre
+ sleep 2
+ # { ip link show tun$rnum ; ifconfig tun$rnum ; } > /tmp/tun.post
+
  # pidfile is done, tun exists, so configure it.
  update_tun $rnum
 
