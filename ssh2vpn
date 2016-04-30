@@ -527,7 +527,10 @@ service_tun() {
  # Wait for the tun device to be created
  wait_for_tun $1 $pid $vpnmode ; wrc=$?
  case $wrc in
- 0)	update_tun $1 $vpnmode ;;	# success, update the tun
+ 0)	# Do I need to give the ssh client a second to work on the tun before
+	# I configure it? I saw a race-condition on the server side.
+	sleep 1
+	update_tun $1 $vpnmode ;;	# success, update the tun
  1)	log "wait_tun=$wrc ssh exited ($1,$pid,$vpnmode)" ;;
  2)	log "wait_tun=$wrc timeout waiting" ;;
  3)	log "wait_tun=$wrc signal received" ;;
@@ -542,9 +545,9 @@ service_tun() {
 # rc=2 timeout
 # rc=3 signal received
 #
-#parms: rnum ssh-pid vpn-mode [secs]
+#parms: rnum ssh-pid vpn-mode [timeout-secs]
 wait_for_tun() {
- max=${4:-90}
+ max=${4:-30}
  x=0
  while true; do
    [ -d /proc/$2 ] || return 1		# PID gone
@@ -554,7 +557,7 @@ wait_for_tun() {
    [ "$sig_rcvd" ] && return 3		# SIGNAL received
 
    x=$(($x + 1))
-   if [ $x -eq 10 -o $x -eq 30 -o $x -eq 60 -o $x -eq $max ]; then
+   if [ $x -gt 1 ]; then
       log "ssh($2) did not create $3$1 after $x secs"
    fi
 
@@ -717,7 +720,7 @@ daemon_cmd() {
    #	- there is another instance of the manager.
    [ -f $mgrpidf ] || die "$mgrpidf missing. Manager exiting."
    mpid=
-   read mpid < $mgrpidf
+   read mpid junk < $mgrpidf
    [ -z "$mpid" ] && die "$mgrpidf empty. Manager exiting."
    [ $mpid -eq $mypid ] || die "Manager pid mismatch ($mypid) found $mpid. Manager exiting."
 
@@ -1147,7 +1150,7 @@ local_running() {
  [ -f $pidfile ] || return 1		# FALSE, no pidfile
 
  read running_pid running_mode < $pidfile
- if [ ! -d /proc/$running_pid ]; then
+ if [ ! -d "/proc/$running_pid" ]; then
     rm -f $pidfile		# delete stale pid file
     running_pid=
     running_mode=
@@ -1381,6 +1384,15 @@ do_from() {
  # This may overwrite an existing stale pid-file in some cases.
  pidfile=$pid_dir/remote.$rnum.pid
  echo $PPID $vpnmode > $pidfile
+
+ # I think I am seeing some race condition if I configure the tun
+ # to quickly?  ... channel 0: write failed (on client side)
+ #
+ # Is there a way I could check if the tun is 'ready' for additional
+ # configuration?
+ # { ip link show tun$rnum ; ifconfig tun$rnum ; } > /tmp/tun.pre
+ sleep 2
+ # { ip link show tun$rnum ; ifconfig tun$rnum ; } > /tmp/tun.post
 
  # pidfile is done, tun exists, so configure it.
  update_tun $rnum $vpnmode
@@ -1622,7 +1634,7 @@ run_agent() {
        # Replace other personal agent in environment.
        SSH_AUTH_SOCK=$agent_sock
        if [ -f $agent_sock.run ]; then
-          read SSH_AGENT_PID < $agent_sock.run
+          read SSH_AGENT_PID junk < $agent_sock.run
        else
           bugme "missing $agent_sock.run"
           unset SSH_AGENT_PID
@@ -1633,7 +1645,7 @@ run_agent() {
     if [ -e $agent_sock ]; then
        export SSH_AUTH_SOCK=$agent_sock
        if [ -f $agent_sock.run ]; then
-          read SSH_AGENT_PID < $agent_sock.run
+          read SSH_AGENT_PID junk < $agent_sock.run
        else
           bugme "missing $agent_sock.run"
           unset SSH_AGENT_PID
