@@ -489,6 +489,10 @@ exec_ssh_service() {
  cd $pid_dir
  [ -f $1.pid ] && die "Error: ssh_service pid file already exists."
  echo $$ > $1.pid
+
+ # If we don't redirect stdout/stderr then some output could
+ # appear in systemd journal.
+ #
  exec_ssh	# rnum desthost (implicit)
 }
 
@@ -629,13 +633,23 @@ exec_ssh() {
  topt=
  [ $vpnmode = tap ] && topt="-o Tunnel	ethernet"	# TAB char
 
+ if $ssh2vpn_debug ; then
+    xtr="-vvv $xtr"
+ fi
+
  remcmd="ssh2vpn from $HOSTNAME $local_hostnum $rnum"
  sshcmd="ssh $topt $ssh_id_opt -nT -w $rnum:$local_hostnum $xtr $destfqdn"
  bugme "agent($SSH_AUTH_SOCK) $sshcmd $remcmd"
+
  # If we do not redirect stdout, then any output from ssh may appear
- # in systemd journal.
- IFS=' '	# no TAB
- exec $sshcmd "$remcmd" 	# > /tmp/ssh2vpn.out 2>&1
+ # in systemd journal (when systemd wrapper is used).
+
+ IFS=' '	# no TAB (see topt with TAB above)
+ if $ssh2vpn_debug ; then
+    exec $sshcmd "$remcmd" > /tmp/ssh2vpn.$rnum.out 2>&1
+ else
+    exec $sshcmd "$remcmd"
+ fi
  # we do not expect exec to return
  die "exec failed: $sshcmd"
 }
