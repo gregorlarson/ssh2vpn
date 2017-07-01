@@ -1,6 +1,0 @@
-# Don't use my ssh-agent, even if it happens
-# to be in the environment when I run ssh2vpn.
-# This is useful if you are testing ssh2vpn and
-# don't want it accidentally using your ssh-agent
-# for authentication.
-no_personal_agent

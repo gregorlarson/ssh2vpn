@@ -1,6 +1,15 @@
 # ssh2vpn
 Mesh VPN based on ssh TUN support.
-[![Join the chat at https://gitter.im/gregorlarson/ssh2vpn](https://badges.gitter.im/gregorlarson/ssh2vpn.svg)](https://gitter.im/gregorlarson/ssh2vpn?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
+Unfortunately, this project did not yield the stability or portability
+I was looking for, so, for now I have abandoned this work in favor of
+another VPN called tinc.  If you are looking for a good mesh VPN then
+I would suggest you check them out at:
+
+:	http://www.tinc-vpn.org/
+
+Thanks for your interest,
+- Greg
 
 I created this because I was having issues with openvpn performance
 due to the centralized nature of openvpn. Also, openvpn was not always
